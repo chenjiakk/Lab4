@@ -1,9 +1,9 @@
 ---
-title: ""
-author: ""
-format:
-  html:
-    embed-resources: true
+title: "Lab4"
+author: "Chenjia Kuang"
+format: html
+editor: visual
+embed-resources: true
 ---
 
 ## Quarto
@@ -26,3 +26,166 @@ You can add options to executable code like this
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
+
+## 1. Read in the data
+
+```{r}
+download.file(
+
+    "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+
+    destfile = "met_all.gz",
+
+    method   = "libcurl",
+
+    timeout  = 60 )
+
+met <- data.table::fread("met_all.gz")
+```
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(ggplot2)
+library(R.utils)
+```
+
+## 2. Prepare the data
+
+```{r}
+met <- data.table::fread("met_all.gz")
+
+met <- met[temp>-17]
+met[met$elev==9999.0] <- NA
+met[met$elev==999.0] <- NA
+summary(met$dew.point)
+```
+
+```{r}
+met$date <- as.Date(paste(met$year, met$month, met$day, sep = "-"))
+```
+
+```{r}
+met$week <- data.table::week(met$date)
+```
+
+```{r}
+met_avg <- met[,.(
+  temp      = mean(temp,na.rm = TRUE), 
+  rh        = mean(rh,na.rm = TRUE), 
+  wind.sp   = mean(wind.sp,na.rm = TRUE), 
+  vis.dist  = mean(vis.dist,na.rm = TRUE), 
+  dew.point = mean(dew.point, na.rm = TRUE), 
+  lat       = mean(lat), 
+  lon       = mean(lon), 
+  elev      = mean(elev,na.rm = TRUE)
+  ), by = "USAFID"]
+```
+
+```{r}
+met_avg[, region:=ifelse(lon > -98, lat > 39.71, "NE")]
+met_avg[, region:=ifelse(lon > -98, lat < 39.71, "SE")]
+met_avg[, region:=ifelse(lon < -98, lat > 39.71, "NW")]
+met_avg[, region:=ifelse(lon < -98, lat > 39.71, "SW")]
+```
+
+```{r}
+met_avg$elev_cat <- ifelse(met_avg$elev> 252, "high", "low")
+```
+
+## 3. **Use `geom_violin` to examine the wind speed and dew point by region**
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot()+
+  geom_violin(mapping = aes(x = 1, y = wind.sp))+
+  facet_wrap(~region, nrow = 1)
+```
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot()+
+  geom_violin(mapping = aes(x = 1, y = dew.point))+
+  facet_wrap(~ region, nrow = 1)
+```
+
+## 4. **Use `geom_jitter` with `stat_smooth` to examine the association between dew point and wind speed by region**
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot(mapping = aes(x = dew.point, y = wind.sp, color = region))+
+  geom_jitter()+
+  stat_smooth(method = lm)
+```
+
+## 5. **Use `geom_bar` to create barplots of the weather stations by elevation category colored by region**
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot()+
+  geom_bar(mapping = aes(x = elev_cat, fill = region), position = "dodge")+
+  labs(title = "The number of weather stations by elevation category and region", x = "Elevation category", y = "Number")+
+  scale_fill_brewer(palette = "Spectral")
+```
+
+## 6. Use stat_summary
+
+```{r}
+install.packages('Hmisc')
+library(Hmisc)
+```
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot(mapping = aes(x = region, y = dew.point))+
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar")+
+  stat_summary(fun.data = "mean_sdl")
+```
+
+```{r}
+met_avg[!is.na(region)] %>%
+  ggplot(mapping = aes(x = region, y = wind.sp))+
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar")+
+  stat_summary(fun.data = "mean_sdl")
+```
+
+## **7. Make a map showing the spatial trend in relative humidity in the US**
+
+```{r}
+library(leaflet)
+```
+
+```{r}
+met_avg2 <- met_avg[!is.na(rh)]
+
+top10 <- met_avg2[rank(-rh) <= 10]
+
+rh_pal <- colorNumeric(c('green', 'yellow', 'blue'), domain = met_avg2$rh)
+
+leaflet(met_avg2) %>%
+  addProviderTiles('OpenStreetMap') %>%
+  addCircles(lat = ~lat, lng = ~lon, color = ~rh_pal(rh), 
+             label = ~paste0(round(rh,2), 'rh'), 
+             opacity = 1,fillOpacity = 1, radius = 500
+             ) %>%
+  addLegend('bottomleft',pal = rh_pal, values = met_avg2$rh,
+            title = 'Relative Humidity,rh', opacity = 1)
+```
+
+## **8. Use a ggplot extension**
+
+```{r}
+install.packages("gganimate")
+install.packages("ggforce")
+```
+
+```{r}
+library(gganimate)
+library(ggforce)
+```
+
+```{r}
+ggplot(met_avg, aes(x = wind.sp, y = dew.point, color = region))+
+  geom_point()+
+  facet_zoom(x = region == "true")
+```
